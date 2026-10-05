@@ -1,0 +1,6 @@
+{
+  "name": "OrbitShield",
+  "description": "Cyber Attack Detection & Safe-Command Gateway for Satellite Ground Stations with cryptographic validation, behavioral anomaly detection, and autonomous safe-mode escalation.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

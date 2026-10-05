@@ -1,0 +1,44 @@
+{
+  "name": "orbitshield",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n gateway,console -c blue,magenta \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:frontend": "vite --port 3000 --host",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:twint": "vite --port 3010 --host --config vite.twin.config.ts",
+    "dev:attacker": "vite --port 3500 --host --config vite.attacker.config.ts",
+    "dev:demo": "concurrently -n ground,twin,attacker,backend -c blue,magenta,purple,red \"npm:dev:ground\" \"npm:dev:twint\" \"npm:dev:attacker\" \"npm:dev:backend\"",
+    "dev:ground": "vite --port 3000 --host --config vite.ground.config.ts",
+    "dev:twin": "vite --port 3010 --host --config vite.twin.config.ts",
+    "dev:attacker": "vite --port 3500 --host --config vite.attacker.config.ts",
+    "typecheck": "tsc --noEmit",
+    "typecheck:backend": "npm --prefix backend run typecheck",
+    "build": "tsc && vite build",
+    "build:twin": "tsc && vite build --config vite.twin.config.ts",
+    "build:attacker": "tsc && vite build --config vite.attacker.config.ts",
+    "preview": "vite preview --port 3000",
+    "test": "vitest run",
+    "test:backend": "vitest run backend/src/tests",
+    "test:gateway": "vitest run src/tests"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.2.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.8"
+  }
+}
