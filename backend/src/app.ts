@@ -10,6 +10,7 @@ import { SecurityEventService } from './services/securityEventService';
 import { SessionService } from './services/sessionService';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import { securityMiddleware, requireTrustedOrigin } from './middleware/security';
 import { healthRouter } from './routes/health';
 import { commandsRouter } from './routes/commands';
 import { attacksRouter } from './routes/attacks';
@@ -18,6 +19,7 @@ import { spacecraftRouter } from './routes/spacecraft';
 import { missionRouter } from './routes/mission';
 import { groundStationsRouter } from './routes/groundStations';
 import { sessionsRouter } from './routes/sessions';
+import { securityRouter } from './routes/security';
 
 export interface ServiceRegistry {
   missionService: MissionService;
@@ -46,6 +48,13 @@ export function createApp(): { app: Express; services: ServiceRegistry } {
   const sessionService = new SessionService();
   const securityEventService = new SecurityEventService();
 
+  // Security router with access to services
+  const securityRouterInstance = securityRouter({
+    securityEventService,
+    spacecraftService,
+    missionService
+  });
+
   const services: ServiceRegistry = {
     missionService,
     spacecraftService,
@@ -60,11 +69,22 @@ export function createApp(): { app: Express; services: ServiceRegistry } {
   app.use(express.json({ limit: '1mb' }));
   app.use(requestLogger);
 
-  // Local-only CORS so the frontend can also reach the API without the Vite proxy
+  // Security middleware: enforce trust zone policy
+  // Runs BEFORE CORS to block untrusted origins
+  app.use(securityMiddleware);
+
+  // CORS: allow trusted origins only (not wildcard)
   app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    const ctx = (req as unknown as Request & { securityContext?: import('./middleware/security').SecurityContext }).securityContext;
+    const origin = ctx?.origin || req.headers.origin as string | undefined;
+    
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Service-Token');
+    
     if (req.method === 'OPTIONS') {
       res.sendStatus(204);
       return;
@@ -80,6 +100,7 @@ export function createApp(): { app: Express; services: ServiceRegistry } {
   app.use('/api/mission', missionRouter({ missionService }));
   app.use('/api/ground-stations', groundStationsRouter());
   app.use('/api/sessions', sessionsRouter({ sessionService }));
+  app.use('/api/security', securityRouterInstance);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

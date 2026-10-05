@@ -5,6 +5,9 @@ import { SpacecraftTwin } from './components/SpacecraftTwin';
 import { AttackSimulator } from './components/AttackSimulator';
 import { SessionView } from './components/SessionView';
 import { BackendMonitor } from './components/BackendMonitor';
+import { ServiceTopology } from './components/ServiceTopology';
+import { SecurityStatusCards } from './components/SecurityStatusCards';
+import { SecurityEventLog } from './components/SecurityEventLog';
 
 interface AppProps {
   activeScreen?: 'ground' | 'twin' | 'attacker';
@@ -82,6 +85,16 @@ export function App({ activeScreen: initialScreen = 'ground' }: AppProps) {
         </div>
       ) : (
         <>
+          {/* Service Topology & Status */}
+          <div className="grid grid-cols-1 gap-6 mb-6">
+            <ServiceTopology />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <SecurityStatusCards />
+              <SecurityEventLog />
+            </div>
+          </div>
+
+          {/* Quick stats */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
               <div className="text-[10px] uppercase font-mono text-slate-500">Active Spacecraft</div>

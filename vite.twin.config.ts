@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 3010,
+    port: 3100,
     host: true,
     // Backends first, then the local security gateway (backend/ on 4000).
     proxy: {
