@@ -17,7 +17,7 @@ import {
   Eye,
   ShieldCheck
 } from 'lucide-react';
-import { AttackScenario, ATTACK_SCENARIOS } from '../models/attacks';
+import { AttackScenario, ATTACK_SCENARIOS, scenarioKey } from '../models/attacks';
 
 interface AttackResultDTO {
   scenario: string;
@@ -229,12 +229,13 @@ export const AttackSimulatorPanel: React.FC<AttackSimulatorPanelProps> = ({
       {/* Scenario grid — large 6-scenario buttons */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {ATTACK_SCENARIOS.map(scenario => {
-          const Icon = SCENARIO_ICONS[scenario.id];
-          const isDownload = scenario.id === 'EAVESDROP';
+          const key = scenarioKey(scenario.id);
+          const Icon = SCENARIO_ICONS[key] ?? ShieldAlert;
+          const isDownload = key === 'EAVESDROP';
           return (
             <div
               key={scenario.id}
-              className={`rounded-2xl border bg-slate-900/70 p-4 shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl ${SCENARIO_COLORS[scenario.id]} ${SCENARIO_HIGHLIGHTS[scenario.id]}`}
+              className={`rounded-2xl border bg-slate-900/70 p-4 shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl ${SCENARIO_COLORS[key] ?? 'border-slate-700/60 hover:border-slate-600/70'} ${SCENARIO_HIGHLIGHTS[key] ?? ''}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
