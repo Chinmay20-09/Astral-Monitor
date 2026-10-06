@@ -343,7 +343,7 @@ OrbitShield is DONE FOR TONIGHT when a judge can watch this:
 6. AI explains the situation in natural language.  
 7. Operator sees severity + explanation + recommended action.  
 8. The three interfaces visibly operate as one system.  
-
+9. The Interface should be isolated even if system is same, remove the UI button to change between screens and make default specific to type, Ground:3000 should open ground screen, Space:3100 should have default space twin screen,Attacker:3500 should open defa
 If that works reliably, STOP.  
 Do not continue adding features.
 
