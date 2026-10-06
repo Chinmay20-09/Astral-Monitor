@@ -135,7 +135,7 @@ export class MissionContextModule {
     if (currentPhase.solar_condition === 'UMBRA_ECLIPSE' && cmdType === 'CAPTURE_IMAGE') {
       conflictingRules.push('RULE-OPT-02: No Payload Imaging in Eclipse (FOP Sec 4.2)');
       findings.push('Attempted optical payload high-power activation (180W draw) during orbital eclipse with 0W solar generation.');
-      riskContribution += 55;
+      riskContribution += 75;
     }
 
     // 2. Thruster Burn safety check

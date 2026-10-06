@@ -70,6 +70,16 @@ export class BehavioralAnalysisModule {
       historicalPattern = historicalPattern || 'CRITICAL_POWER_DEPLETION_ATTEMPT';
     }
 
+    // Pattern 2b: Credential Compromise Indicator — valid credentials used for
+    // high-power payload activation during orbital eclipse (0W solar generation).
+    // This is a hallmark of stolen ground-station credentials being abused
+    // to violate mission flight rules during a power-critical orbital phase.
+    if (cmdType === 'CAPTURE_IMAGE' && spacecraftState.power.in_eclipse) {
+      anomalyScore += 75;
+      findings.push(`Compromised credential indicator: optical payload high-power activation (180W draw) during orbital eclipse with 0W solar generation.`);
+      historicalPattern = historicalPattern || 'CREDENTIAL_COMPROMISE_ECLIPSE_IMAGING';
+    }
+
     // Pattern 3: Propulsion or Wheel tumbling without diagnostic verification
     if (cmdType === 'FIRE_THRUSTER') {
       const deltaV = envelope.payload.parameters?.delta_v ?? 0;

@@ -126,10 +126,12 @@ export class CommandService {
     let client = this.operatorClients.get(keyId);
     if (!client) {
       client = new GroundStationClient(keyId, 1000, this.spacecraftId);
-      const last = this.gateway.replayModule.getLastSequenceNumber(this.spacecraftId, keyId);
-      client.setSequenceCounter(last);
       this.operatorClients.set(keyId, client);
     }
+    // Always re-sync with the gateway's current replay state so the client
+    // never emits a sequence that replays a previously processed command.
+    const last = this.gateway.replayModule.getLastSequenceNumber(this.spacecraftId, keyId);
+    client.setSequenceCounter(last);
     return client;
   }
 

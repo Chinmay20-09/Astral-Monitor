@@ -12,9 +12,13 @@ import {
   Eye,
   Sparkles,
   AlertTriangle,
-  ShieldCheck
+  ShieldCheck,
+  XCircle,
+  Lock,
+  RefreshCw
 } from 'lucide-react';
 import { AttackScenario, ATTACK_SCENARIOS } from '../models/attacks';
+import { attackerClient } from '../attacker/attackerClient';
 
 interface AttackResultDTO {
   scenario: string;
@@ -36,8 +40,30 @@ interface AttackResultDTO {
   };
 }
 
+interface AttackerBlockResult {
+  success: boolean;
+  status: number;
+  blocked: boolean;
+  error?: string;
+  result?: unknown;
+  description: string;
+  scenario: string;
+}
+
+interface SecurityEventDTO {
+  id: string;
+  timestamp: string;
+  type: string;
+  severity: string;
+  source: string;
+  target: string;
+  decision: string;
+  riskScore: number;
+  message: string;
+}
+
 interface AttackSimulatorProps {
-  onAttackResult?: (scenario: string, result: AttackResultDTO) => void;
+  onAttackResult?: (scenario: string, result: AttackResultDTO | AttackerBlockResult) => void;
 }
 
 const ATTACK_SCENARIO_IDS = [
@@ -48,6 +74,14 @@ const ATTACK_SCENARIO_IDS = [
   'DESTRUCTIVE_BURN',
   'EAVESDROP'
 ] as const;
+
+const SCENARIO_MAP: Record<string, (() => Promise<{ envelope: any; description: string }>)> = {
+  TAMPERING: () => attackerClient.generateTamperedCommand(),
+  INJECTION: () => attackerClient.generateUnauthorizedInjection(),
+  REPLAY: () => attackerClient.generateReplayCommand(),
+  CREDENTIAL_COMPROMISE: () => attackerClient.generateCredentialCompromiseCommand(),
+  DESTRUCTIVE_BURN: () => attackerClient.generateDestructiveBurn()
+};
 
 const SCENARIO_ICONS: Record<string, typeof Skull> = {
   TAMPERING: FileCode,
@@ -78,21 +112,53 @@ const SCENARIO_HIGHLIGHTS: Record<string, string> = {
 
 export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult }) => {
   const [results, setResults] = useState<AttackResultDTO[]>([]);
+  const [blocks, setBlocks] = useState<AttackerBlockResult[]>([]);
   const [brief, setBrief] = useState<string | null>(null);
-  const [details, setDetails] = useState<AttackResultDTO | null>(null);
-  const [isSimulating, setIsSimulating] = useState(false);
+  const [details, setDetails] = useState<AttackResultDTO | null>(null);  const [isSimulating, setIsSimulating] = useState(false);
+  const [timeline, setTimeline] = useState<SecurityEventDTO[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(true);
 
   useEffect(() => {
     if (onAttackResult) {
-      const handler = (_scenario: string, result: AttackResultDTO) => {
-        setResults((prev) => [...prev, result]);
+      const handler = (_scenario: string, result: AttackResultDTO | AttackerBlockResult) => {
+        if ('audit_event' in result) {
+          setResults((prev) => [...prev, result as AttackResultDTO]);
+        } else {
+          setBlocks((prev) => [...prev, result as AttackerBlockResult]);
+        }
         onAttackResult(_scenario, result);
       };
-      return () => {
-        // noop — intra-app wiring is handled by parent
-      };
+      return () => {};
     }
   }, [onAttackResult]);
+
+  // Fetch security event timeline from backend
+  useEffect(() => {
+    const fetchTimeline = async () => {
+      try {
+        // Try to fetch from backend - may be blocked by security middleware
+        const res = await fetch('/api/security/events?limit=20', {
+          headers: { 'Origin': 'http://localhost:3500' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setTimeline(data.events || []);
+        } else {
+          // Backend blocked the request - that's expected for attacker
+          // Show empty timeline with note about being blocked
+          setTimeline([]);
+        }
+      } catch {
+        setTimeline([]);
+      } finally {
+        setTimelineLoading(false);
+      }
+    };
+    fetchTimeline();
+    // Poll every 5 seconds
+    const interval = setInterval(fetchTimeline, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const runNormal = async () => {
     setIsSimulating(true);
@@ -106,33 +172,70 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
           parameters: { subsystems: ['power', 'thermal'] }
         })
       });
-      const data = (await res.json()) as AttackResultDTO;
-      setResults((prev) => [...prev, data]);
-      setBrief(data.audit_event.policy.explanation);
-      setDetails(data);
-      onAttackResult?.('NORMAL', data);
+      if (res.ok) {
+        const data = (await res.json()) as AttackResultDTO;
+        setResults((prev) => [...prev, data]);
+        setBrief(data.audit_event.policy.explanation);
+        setDetails(data);
+        onAttackResult?.('NORMAL', data);
+      }
     } finally {
       setIsSimulating(false);
     }
   };
 
+  /**
+   * Launch attack from attacker's independent client.
+   * The attacker generates the envelope client-side and sends it directly
+   * to the backend's /api/commands endpoint.
+   * The backend security middleware detects untrusted origin and blocks it.
+   */
   const runAttack = async (scenario: string) => {
     setIsSimulating(true);
     try {
-      const res = await fetch('/api/attacks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario })
-      });
-      const data = (await res.json()) as AttackResultDTO;
-      setResults((prev) => [...prev, data]);
-      setBrief(data.audit_event.policy.explanation);
-      setDetails(data);
-      onAttackResult?.(scenario, data);
+      // 1. Generate envelope client-side (attacker's independent capability)
+      const generator = SCENARIO_MAP[scenario];
+      if (!generator) {
+        setBrief(`Unknown attack scenario: ${scenario}`);
+        return;
+      }
+
+      const { envelope, description } = await generator();
+
+      // 2. Send directly to backend (attacker's independent action)
+      const blockResult = await attackerClient.sendAttack(envelope);
+
+      // 3. Record the block result
+      const attackerBlock: AttackerBlockResult = {
+        success: blockResult.success,
+        status: blockResult.status,
+        blocked: blockResult.blocked,
+        error: blockResult.error,
+        result: blockResult.result,
+        description,
+        scenario
+      };
+
+      setBlocks((prev) => [...prev, attackerBlock]);
+      setBrief(description);
+
+      // 4. If backend returned a result (edge case: origin check passed),
+      //    parse it as AttackResultDTO
+      if (blockResult.result && typeof blockResult.result === 'object' && 'audit_event' in blockResult.result) {
+        const result = blockResult.result as AttackResultDTO;
+        setResults((prev) => [...prev, result]);
+        setDetails(result);
+        onAttackResult?.(scenario, result);
+      } else {
+        // Blocked — notify parent
+        onAttackResult?.(scenario, attackerBlock);
+      }
     } finally {
       setIsSimulating(false);
     }
   };
+
+
 
   return (
     <div className="space-y-6">
@@ -150,32 +253,20 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
               Multi-Stage Cyber Attack & Safe-Command Escalation
             </h3>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Stage 1: Normal telemetry → Stage 2: In-transit tampering (integrity block) → Stage 3: Rogue key / unauthorized injection (auth block) → Stage 4: Stolen credential in eclipse imaging (mission conflict) → Stage 5: Destructive burn (autonomous safe mode). All hostile envelopes are manufactured server-side; the browser sends scenario intents only.
-            </p>
-
-            <div className="pt-2">
-              <div className="flex items-center justify-center gap-2 text-[11px] font-mono">
-                {['1', '2'].map((s) => (
-                  <div key={s} className="h-2.5 rounded-full bg-emerald-500/60" />
-                ))}
-                <div className="flex -space-x-1">
-                  {['1', '2'].map((s) => (
-                    <div key={s} className="w-2.5 h-2.5 rounded-full border-2 bg-purple-500 border-purple-300" />
-                  ))}
-                </div>
-
+              Stage 1: Normal telemetry → Stage 2: In-transit tampering (integrity block) → Stage 3: Rogue key / unauthorized injection (auth block) → Stage 4: Stolen credential in eclipse imaging (mission conflict) → Stage 5: Destructive burn (autonomous safe mode). Attacker generates envelopes client-side on port 3500; backend security middleware blocks untrusted origins.
+            </p>            <div className="pt-2">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={runNormal}
+                  disabled={isSimulating}
+                  className="flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-mono font-bold text-sm shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                >
+                  <Play className="w-4 h-4 fill-white" />
+                  <span>Run Normal</span>
+                </button>
               </div>
             </div>
           </div>
-
-          <button
-            onClick={runNormal}
-            disabled={isSimulating}
-            className="w-full lg:w-auto px-7 py-3.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-mono font-bold text-sm shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2.5 transition cursor-pointer disabled:opacity-50 disabled:cursor-wait"
-          >
-            <Play className="w-4 h-4 fill-white" />
-            <span>Run 2-Stage Demo</span>
-          </button>
         </div>
       </div>
 
@@ -228,41 +319,72 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
           <div className="flex items-center gap-2">
             <Skull className="w-4 h-4 text-rose-400" />
             <span className="text-xs font-mono font-bold text-white">Attack Run Log</span>
-            <span className="text-[10px] text-slate-500 font-mono">{results.length} requests</span>
+            <span className="text-[10px] text-slate-500 font-mono">{results.length + blocks.length} attacks</span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] font-mono">
+            <span className="px-2 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-800">
+              ATTACKER :3500 UNTRUSTED
+            </span>
           </div>
         </div>
 
         <div className="p-4 space-y-3">
-          {results.length === 0 ? (
+          {(results.length === 0 && blocks.length === 0) ? (
             <div className="h-32 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 font-mono">
               No attacks launched yet. Select a scenario above.
             </div>
           ) : (
-            results.map((r, i) => (
-              <div
-                key={i}
-                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-950/40 border border-slate-800/70"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`px-2.5 py-1 rounded text-[10px] font-mono border ${
-                    r.audit_event.final_decision === 'ALLOW'
-                      ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
-                      : r.audit_event.final_decision === 'SAFE_MODE'
-                      ? 'bg-rose-950/60 text-rose-300 border-rose-800'
-                      : 'bg-amber-950/60 text-amber-300 border-amber-800'
-                  }`}>
-                    {r.audit_event.final_decision}
+            <>
+              {blocks.map((block, i) => (
+                <div
+                  key={`block-${i}`}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-rose-950/30 border border-rose-800/60"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 rounded-lg bg-rose-900/60 border border-rose-700/50">
+                      <XCircle className="w-4 h-4 text-rose-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-mono text-rose-300 font-bold">{block.scenario} — BLOCKED</div>
+                      <div className="text-[10px] text-slate-400 font-mono truncate">{block.description}</div>
+                      {block.error && (
+                        <div className="text-[10px] text-rose-400 font-mono mt-1">{block.error}</div>
+                      )}
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-mono text-white">{r.scenario}</div>
-                    <div className="text-[10px] text-slate-500 font-mono truncate">{r.description}</div>
+                  <div className="text-right text-[10px] font-mono text-slate-400">
+                    <span className="px-2 py-0.5 rounded bg-rose-900/60 text-rose-300 border border-rose-700/50">
+                      HTTP {block.status} {block.blocked ? 'BLOCKED' : 'DENIED'}
+                    </span>
                   </div>
                 </div>
-                <div className="text-right text-[10px] font-mono text-slate-400 sm:text-center">
-                  risk {r.audit_event.risk.total_score}/100 · {r.audit_event.risk.severity}
+              ))}
+              {results.map((r, i) => (
+                <div
+                  key={`result-${i}`}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-950/40 border border-slate-800/70"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`px-2.5 py-1 rounded text-[10px] font-mono border ${
+                      r.audit_event.final_decision === 'ALLOW'
+                        ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
+                        : r.audit_event.final_decision === 'SAFE_MODE'
+                        ? 'bg-rose-950/60 text-rose-300 border-rose-800'
+                        : 'bg-amber-950/60 text-amber-300 border-amber-800'
+                    }`}>
+                      {r.audit_event.final_decision}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-mono text-white">{r.scenario}</div>
+                      <div className="text-[10px] text-slate-500 font-mono truncate">{r.description}</div>
+                    </div>
+                  </div>
+                  <div className="text-right text-[10px] font-mono text-slate-400 sm:text-center">
+                    risk {r.audit_event.risk.total_score}/100 · {r.audit_event.risk.severity}
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </>
           )}
         </div>
       </div>

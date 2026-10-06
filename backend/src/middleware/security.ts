@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
+import { SecurityEventRepository } from '../db/repositories/securityEventRepository';
 
 // Trusted origins that can access backend APIs
 const TRUSTED_ORIGINS = [
@@ -81,20 +82,61 @@ export function securityMiddleware(
     isTrusted: trustZone === 'TRUSTED',
   };
 
-  // Block untrusted origins from API access
+  // Block untrusted origins from privileged API access
+  // BUT allow attacker to submit commands to /api/commands for security demo
   if (trustZone === 'UNTRUSTED') {
+    // Attacker can submit commands to /api/commands (for attack demonstration)
+    // but cannot access privileged endpoints
+    if (req.path === '/api/commands' || req.path.startsWith('/api/commands/')) {
+      // Allow attacker to submit hostile commands to the security gateway
+      // The gateway will process them and generate proper audit events
+      console.log(`[security] ALLOWED attacker command submission to ${req.path} (for security demo)`);
+      // Don't attach trusted context - attacker remains UNTRUSTED
+      // The command processing pipeline will handle authentication/integrity/replay
+      next();
+      return;
+    }
+    
+    // All other endpoints: block attacker
     console.log(`[security] BLOCKED untrusted request from ${origin || 'unknown'} to ${req.method} ${req.path}`);
     
-    // Log security event (would go to security event service in production)
-    console.log(`[security] SECURITY EVENT: UNAUTHORIZED_ACCESS from ${origin || 'unknown'} target=${req.path}`);
+    // Generate single event ID for consistency across SQLite, response, and frontend
+    const eventId = `EVT-${Date.now()}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
     
+    // Persist security event for blocked request using SAME event ID
+    try {
+      const eventRepo = new SecurityEventRepository();
+      eventRepo.insert({
+        event_id: eventId,
+        timestamp: new Date().toISOString(),
+        command_id: 'ATTACK-ATTEMPT',
+        spacecraft_id: 'SAT-01',
+        sender_identity: origin || 'ATTACKER-ROGUE-GS',
+        envelope: {} as any,
+        integrity: { passed: false, computed_signature: '', received_signature: '', algorithm: 'NONE', error: 'Request blocked at perimeter' } as any,
+        authentication: { passed: false, key_id: 'ATTACKER-ROGUE-GS', error: 'Untrusted origin blocked' } as any,
+        replay: { passed: false, nonce_is_fresh: false, sequence_valid: false, timestamp_valid: false, clock_skew_seconds: 0, expected_sequence: 0, received_sequence: 0, error: 'Request blocked' } as any,
+        behavioral: { is_anomalous: true, anomaly_score: 90, confidence: 1.0, findings: ['Untrusted origin access attempt'], explanation: 'Attacker attempted to access privileged backend endpoint from untrusted zone', suggested_risk_delta: 50 } as any,
+        mission_context: { is_compliant: false, conflicting_rules: ['NETWORK_SEGMENTATION'], current_phase: 'UNKNOWN', environmental_factors: [], findings: ['Request from untrusted origin blocked'], risk_contribution: 50 } as any,
+        risk: { total_score: 95, severity: 'CRITICAL', breakdown: { cryptographic_penalty: 80, behavioral_penalty: 50, mission_conflict_penalty: 50, spacecraft_vulnerability_penalty: 0, command_inherent_criticality: 50 }, summary: 'Untrusted origin blocked' } as any,
+        policy: { decision: 'BLOCK', enforced_by_deterministic_rule: true, rule_triggered: 'UNTRUSTED_ORIGIN_BLOCKED', safe_mode_activated: false, operator_alert_dispatched: true, explanation: 'Request from untrusted origin (attacker zone) blocked by security middleware' } as any,
+        final_decision: 'BLOCK',
+        simulated_attack_type: 'UNAUTHORIZED_ACCESS'
+      });
+      console.log(`[security] Security event persisted: ${eventId} - UNAUTHORIZED_ACCESS blocked`);
+    } catch (err) {
+      console.error('[security] Failed to persist security event:', err);
+    }
+    
+    // Return SAME event ID in response
     res.status(403).json({
       error: 'Access denied: untrusted origin',
       security: {
         blocked: true,
         reason: 'Origin not in trusted zones',
         trustZone,
-        path: req.path
+        path: req.path,
+        event_id: eventId  // SAME ID as SQLite
       }
     });
     return;
