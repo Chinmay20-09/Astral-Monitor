@@ -14,36 +14,29 @@ import {
   AlertTriangle,
   ShieldCheck,
   XCircle,
-  Lock,
-  RefreshCw
+  Lock
 } from 'lucide-react';
 import { AttackScenario, ATTACK_SCENARIOS } from '../models/attacks';
 import { attackerClient } from '../attacker/attackerClient';
+import { AuditEvent } from '../models/audit';
+import { SpacecraftState, EssentialTelemetry } from '../models/spacecraft';
 
 interface AttackResultDTO {
   scenario: string;
   description: string;
-  audit_event: {
-    final_decision: string;
-    risk: { total_score: number; severity: string };
-    policy: { explanation: string; rule_triggered?: string };
-    replay: { passed: boolean };
-    envelope: { security: { ciphertext?: string; iv?: string; signature: string; algorithm: string; key_id: string } };
-    behavioral: { is_anomalous: boolean };
-  };
+  audit_event: AuditEvent;
   executed: boolean;
   execution_message?: string;
-  spacecraft_state: {
-    operating_mode: string;
-    communication_status: string;
-    power: { battery_percent: number };
-  };
+  spacecraft_state: SpacecraftState;
+  telemetry?: EssentialTelemetry;
 }
 
 interface AttackerBlockResult {
   success: boolean;
   status: number;
   blocked: boolean;
+  perimeterBlocked: boolean;
+  gatewayProcessed: boolean;
   error?: string;
   result?: unknown;
   description: string;
@@ -114,9 +107,8 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
   const [results, setResults] = useState<AttackResultDTO[]>([]);
   const [blocks, setBlocks] = useState<AttackerBlockResult[]>([]);
   const [brief, setBrief] = useState<string | null>(null);
-  const [details, setDetails] = useState<AttackResultDTO | null>(null);  const [isSimulating, setIsSimulating] = useState(false);
-  const [timeline, setTimeline] = useState<SecurityEventDTO[]>([]);
-  const [timelineLoading, setTimelineLoading] = useState(true);
+  const [details, setDetails] = useState<AttackResultDTO | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
 
   useEffect(() => {
     if (onAttackResult) {
@@ -131,34 +123,6 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
       return () => {};
     }
   }, [onAttackResult]);
-
-  // Fetch security event timeline from backend
-  useEffect(() => {
-    const fetchTimeline = async () => {
-      try {
-        // Try to fetch from backend - may be blocked by security middleware
-        const res = await fetch('/api/security/events?limit=20', {
-          headers: { 'Origin': 'http://localhost:3500' }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setTimeline(data.events || []);
-        } else {
-          // Backend blocked the request - that's expected for attacker
-          // Show empty timeline with note about being blocked
-          setTimeline([]);
-        }
-      } catch {
-        setTimeline([]);
-      } finally {
-        setTimelineLoading(false);
-      }
-    };
-    fetchTimeline();
-    // Poll every 5 seconds
-    const interval = setInterval(fetchTimeline, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   const runNormal = async () => {
     setIsSimulating(true);
@@ -178,6 +142,9 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
         setBrief(data.audit_event.policy.explanation);
         setDetails(data);
         onAttackResult?.('NORMAL', data);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }));
+        setBrief(`Normal command failed: ${err.error || res.statusText}`);
       }
     } finally {
       setIsSimulating(false);
@@ -203,31 +170,35 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
       const { envelope, description } = await generator();
 
       // 2. Send directly to backend (attacker's independent action)
+      // The attacker posts to /api/commands which is allowed through the perimeter
+      // for security demo purposes. The gateway then processes the envelope through
+      // the full pipeline (auth → integrity → replay → behavioral → mission → risk → policy).
       const blockResult = await attackerClient.sendAttack(envelope);
 
-      // 3. Record the block result
-      const attackerBlock: AttackerBlockResult = {
-        success: blockResult.success,
-        status: blockResult.status,
-        blocked: blockResult.blocked,
-        error: blockResult.error,
-        result: blockResult.result,
-        description,
-        scenario
-      };
-
-      setBlocks((prev) => [...prev, attackerBlock]);
-      setBrief(description);
-
-      // 4. If backend returned a result (edge case: origin check passed),
-      //    parse it as AttackResultDTO
-      if (blockResult.result && typeof blockResult.result === 'object' && 'audit_event' in blockResult.result) {
+      // 3. Record the result
+      if (blockResult.gatewayProcessed) {
+        // Gateway processed the envelope and returned a full audit result
+        // This means the command went through the FULL pipeline and was decided by the gateway
         const result = blockResult.result as AttackResultDTO;
         setResults((prev) => [...prev, result]);
         setDetails(result);
+        setBrief(result.description || description);
         onAttackResult?.(scenario, result);
       } else {
-        // Blocked — notify parent
+        // Perimeter block or network error — the gateway never saw the envelope
+        const attackerBlock: AttackerBlockResult = {
+          success: blockResult.success,
+          status: blockResult.status,
+          blocked: blockResult.blocked,
+          perimeterBlocked: blockResult.perimeterBlocked,
+          gatewayProcessed: blockResult.gatewayProcessed,
+          error: blockResult.error,
+          result: blockResult.result,
+          description,
+          scenario
+        };
+        setBlocks((prev) => [...prev, attackerBlock]);
+        setBrief(description);
         onAttackResult?.(scenario, attackerBlock);
       }
     } finally {
@@ -262,9 +233,13 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
                   className="flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-mono font-bold text-sm shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 disabled:cursor-wait"
                 >
                   <Play className="w-4 h-4 fill-white" />
-                  <span>Run Normal</span>
+                  <span>Run Normal (trusted path)</span>
                 </button>
               </div>
+              <p className="text-[10px] text-slate-500 mt-2 font-mono">
+                Normal commands use the trusted operator path (/api/commands/operator). 
+                Attacks use the direct path (/api/commands) from the untrusted attacker zone.
+              </p>
             </div>
           </div>
         </div>
@@ -347,8 +322,20 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
                     <div className="min-w-0">
                       <div className="text-xs font-mono text-rose-300 font-bold">{block.scenario} — BLOCKED</div>
                       <div className="text-[10px] text-slate-400 font-mono truncate">{block.description}</div>
-                      {block.error && (
-                        <div className="text-[10px] text-rose-400 font-mono mt-1">{block.error}</div>
+                      {block.perimeterBlocked && (
+                        <div className="text-[10px] text-rose-400 font-mono mt-1">
+                          ⟶ Perimeter block: request rejected at security edge (403)
+                        </div>
+                      )}
+                      {block.gatewayProcessed && block.error && (
+                        <div className="text-[10px] text-amber-400 font-mono mt-1">
+                          ⟶ Gateway block: {block.error}
+                        </div>
+                      )}
+                      {!block.perimeterBlocked && !block.gatewayProcessed && block.error && (
+                        <div className="text-[10px] text-slate-400 font-mono mt-1">
+                          {block.error}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -356,6 +343,12 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
                     <span className="px-2 py-0.5 rounded bg-rose-900/60 text-rose-300 border border-rose-700/50">
                       HTTP {block.status} {block.blocked ? 'BLOCKED' : 'DENIED'}
                     </span>
+                    {block.gatewayProcessed && (
+                      <div className="mt-1 text-emerald-400 font-bold">↳ GATEWAY PROCESSED</div>
+                    )}
+                    {block.perimeterBlocked && (
+                      <div className="mt-1 text-rose-400 font-bold">↳ PERIMETER BLOCK</div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -370,17 +363,36 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
                         ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
                         : r.audit_event.final_decision === 'SAFE_MODE'
                         ? 'bg-rose-950/60 text-rose-300 border-rose-800'
+                        : r.audit_event.final_decision === 'BLOCK'
+                        ? 'bg-rose-950/60 text-rose-300 border-rose-800'
                         : 'bg-amber-950/60 text-amber-300 border-amber-800'
                     }`}>
                       {r.audit_event.final_decision}
                     </div>
                     <div className="min-w-0">
                       <div className="text-xs font-mono text-white">{r.scenario}</div>
-                      <div className="text-[10px] text-slate-500 font-mono truncate">{r.description}</div>
+                      <div className="text-[10px] text-slate-400 font-mono truncate">{r.description}</div>
+                      <div className="text-[10px] text-slate-500 font-mono mt-1">
+                        auth: {r.audit_event.authentication.passed ? 'PASS' : 'FAIL'} · 
+                        integrity: {r.audit_event.integrity.passed ? 'PASS' : 'FAIL'} · 
+                        replay: {r.audit_event.replay.passed ? 'PASS' : 'FAIL'}
+                      </div>
+                      {r.audit_event.policy.rule_triggered && (
+                        <div className="text-[10px] text-cyan-400 font-mono mt-0.5">
+                          rule: {r.audit_event.policy.rule_triggered}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="text-right text-[10px] font-mono text-slate-400 sm:text-center">
-                    risk {r.audit_event.risk.total_score}/100 · {r.audit_event.risk.severity}
+                    <div className="font-bold">risk {r.audit_event.risk.total_score}/100</div>
+                    <div>{r.audit_event.risk.severity}</div>
+                    {r.audit_event.final_decision === 'BLOCK' && (
+                      <div className="text-rose-400 font-bold mt-1">↳ GATEWAY BLOCKED</div>
+                    )}
+                    {r.audit_event.final_decision === 'SAFE_MODE' && (
+                      <div className="text-amber-400 font-bold mt-1">↳ SAFE MODE TRIGGERED</div>
+                    )}
                   </div>
                 </div>
               ))}

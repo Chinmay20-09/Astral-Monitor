@@ -1,6 +1,6 @@
 # OrbitShield (ST-02)
 
-**Cyber Attack Detection & Safe-Command Gateway for Satellite Ground Stations**
+Cyber Attack Detection & Safe-Command Gateway for Satellite Ground Stations
 
 OrbitShield is a security control plane and modular gateway positioned between satellite ground stations and spacecraft flight software. It validates structured command traffic, detects suspicious behavior, halts replay and tampering attacks, and places the spacecraft into a protected safe mode for high-confidence threats while maintaining essential telemetry carrier downlinks.
 
@@ -65,7 +65,7 @@ inside the backend via `CommandService`.
 ## Threat Model & Supported Attack Scenarios
 
 | Attack Vector | Attacker Action | Gateway Defense Mechanism | Result |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **In-Transit Tampering** | Modifies payload parameters (e.g. injects illegal thruster burn) without the key | HMAC-SHA256 integrity/authentication tag over canonical envelope | **BLOCK** |
 | **Unauthorized Injection** | Injects command signed with rogue key ID (`ATTACKER-ROGUE-GS`) | Key Registry Authentication & Role Clearance Check | **BLOCK** |
 | **Replay Attack** | Replays captured valid command with stale sequence and used nonce | Bounded nonce cache + per-sender monotonic sequence + 60s skew window | **BLOCK** |
@@ -81,6 +81,7 @@ traffic cannot poison the sequence stream.
 ## Multi-Stage Hackathon Demonstration (PRD Section 5)
 
 Click **"Run 5-Stage Live Attack Demo"** in the Attack Simulator to execute:
+
 1. **Normal Operation:** Routine telemetry query processed and acknowledged.
 2. **Interception & Tampering:** Attacker modifies payload; blocked by HMAC integrity.
 3. **Rogue Injection:** Attacker introduces unauthorized key; blocked by authentication.
@@ -96,27 +97,33 @@ replay history remain.
 ## Running the Application
 
 ### 1. Install Dependencies (frontend + backend)
+
 ```bash
 npm install
 npm --prefix backend install
 ```
 
 ### 2. Database Initialization
+
 Nothing to do manually: on first backend start, migrations in
 `backend/src/db/migrations/` are applied automatically to
 `backend/data/orbitshield.db` (created if missing; WAL mode).
 
 ### 3. Run Everything (backend + frontend)
+
 ```bash
 npm run dev
 ```
+
 Or individually:
+
 ```bash
 npm run dev:backend   # security gateway API on http://127.0.0.1:4000
 npm run dev:frontend  # dashboard on http://localhost:3000 (proxies /api → :4000)
 ```
 
 ### 4. Tests
+
 ```bash
 npm test             # all suites: gateway pipeline (10) + backend HTTP (17)
 npm run test:gateway # original TRD Section 14 gateway suite
@@ -124,12 +131,14 @@ npm run test:backend # backend API/persistence/secret-boundary suite
 ```
 
 ### 5. TypeScript Checks
+
 ```bash
 npm run typecheck          # frontend
 npm run typecheck:backend  # backend
 ```
 
 ### 6. Production Build
+
 ```bash
 npm run build   # typecheck + vite build → dist/
 ```
@@ -139,7 +148,7 @@ npm run build   # typecheck + vite build → dist/
 ## Backend HTTP API (local only)
 
 | Endpoint | Method | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `/api/health` | GET | Liveness + persistence statistics |
 | `/api/commands` | POST | Run a raw (possibly hostile) command envelope through the full pipeline |
 | `/api/commands/operator` | POST | **Operator console:** send a command intent; backend signs/encrypts server-side |
@@ -184,6 +193,7 @@ Configuration lives in `backend/.env` (see `backend/.env.example`):
 ## Environment Variables
 
 See `.env.example` (frontend, non-sensitive):
+
 - `VITE_SPACECRAFT_ID`: Target spacecraft identifier (default: `SAT-01`)
 - `VITE_DEFAULT_GROUND_STATION`: Default uplink station (default: `GS-PRIMARY-01`)
 - `VITE_MAX_CLOCK_SKEW_SECONDS`: Maximum clock tolerance (default: `60`)

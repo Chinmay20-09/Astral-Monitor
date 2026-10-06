@@ -16,6 +16,29 @@ interface GroundConsoleProps {
   spacecraftId?: string;
 }
 
+// Form state for spaceship creation
+interface CreateSpacecraftForm {
+  spacecraft_id: string;
+  name: string;
+  mission_name: string;
+  mission_type: string;
+  orbit_type: string;
+  orbit_altitude_km: string;
+  ground_station: string;
+  operator_name: string;
+}
+
+const INITIAL_CREATE_FORM: CreateSpacecraftForm = {
+  spacecraft_id: '',
+  name: '',
+  mission_name: '',
+  mission_type: 'Science',
+  orbit_type: 'SUN_SYNCHRONOUS',
+  orbit_altitude_km: '540',
+  ground_station: 'GS-PRIMARY-01',
+  operator_name: '',
+};
+
 const COMMAND_TEMPLATES: { type: CommandType; label: string; params: Record<string, unknown> }[] = [
   { type: 'QUERY_TELEMETRY', label: 'QUERY_TELEMETRY', params: { subsystems: ['power', 'thermal', 'navigation'] } },
   { type: 'CAPTURE_IMAGE', label: 'CAPTURE_IMAGE', params: { target: 'Nadir Earth swath', resolution: '4096x3072' } },
@@ -35,6 +58,13 @@ export const GroundConsole: React.FC<GroundConsoleProps> = ({ spacecraftId = 'SA
   const [error, setError] = useState<string | null>(null);
   const [selectedStation, setSelectedStation] = useState<string>('GS-PRIMARY-01');
   const [selectedCommand, setSelectedCommand] = useState<CommandType>('QUERY_TELEMETRY');
+
+  // Spaceship creation form state
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createForm, setCreateForm] = useState<CreateSpacecraftForm>(INITIAL_CREATE_FORM);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createSuccess, setCreateSuccess] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -307,6 +337,66 @@ export const GroundConsole: React.FC<GroundConsoleProps> = ({ spacecraftId = 'SA
   const activeSessionId = sessions.find((s) => s.active)?.session_id ?? null;
   const sessionCount = sessions.length;
 
+  const handleCreateSpacecraft = async () => {
+    if (!createForm.spacecraft_id.trim() || !createForm.name.trim() || !createForm.mission_name.trim() ||
+        !createForm.operator_name.trim()) {
+      setCreateError('Spacecraft ID, Name, Mission Name, and Operator Name are required.');
+      return;
+    }
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch('/api/spacecraft', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'http://localhost:3000'
+        },
+        body: JSON.stringify({
+          spacecraft_id: createForm.spacecraft_id.trim(),
+          name: createForm.name.trim(),
+          mission_name: createForm.mission_name.trim(),
+          mission_type: createForm.mission_type,
+          orbit_type: createForm.orbit_type,
+          orbit_altitude_km: Number(createForm.orbit_altitude_km),
+          ground_station: createForm.ground_station,
+          operator_name: createForm.operator_name.trim()
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setCreateSuccess(`Spacecraft ${data.spacecraft_id} created successfully! Session: ${data.session_id}`);
+      // Reset form and refresh data
+      setCreateForm(INITIAL_CREATE_FORM);
+      setShowCreateForm(false);
+      // Force reload of spacecraft data
+      const [st, sp, mn, sessionsData] = await Promise.all([
+        orbitShieldApi.getGroundStations(),
+        orbitShieldApi.getSpacecraft(),
+        orbitShieldApi.getMission(),
+        orbitShieldApi.listSessions()
+      ]);
+      setStations(st.total > 0 ? st.stations : []);
+      setState(sp.state);
+      setTelemetry(sp.telemetry);
+      setMission(mn.mission);
+      setSessions(sessionsData.sessions ?? []);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create spacecraft');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const resetCreateForm = () => {
+    setCreateForm(INITIAL_CREATE_FORM);
+    setCreateError(null);
+    setCreateSuccess(null);
+  };
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -452,6 +542,173 @@ export const GroundConsole: React.FC<GroundConsoleProps> = ({ spacecraftId = 'SA
               </div>
             </div>
           </div>
+
+          {/* ── Create New Spacecraft Form ─────────────────────────────────────── */}
+          {showCreateForm && (
+            <div className="bg-slate-900/80 border border-cyan-700/50 rounded-2xl p-5 shadow-xl">
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-cyan-400" />
+                  <h3 className="text-sm font-bold text-white font-mono uppercase">Create New Spacecraft</h3>
+                </div>
+                <button
+                  onClick={() => { setShowCreateForm(false); resetCreateForm(); }}
+                  className="text-[10px] text-slate-400 hover:text-slate-200 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              {createSuccess && (
+                <div className="mb-4 p-3 rounded-xl bg-emerald-950/30 border border-emerald-700/50 text-xs font-mono text-emerald-300">
+                  <CheckCircle className="w-4 h-4 inline mr-1" /> {createSuccess}
+                </div>
+              )}
+
+              {createError && (
+                <div className="mb-4 p-3 rounded-xl bg-rose-950/30 border border-rose-700/50 text-xs font-mono text-rose-300">
+                  ⚠ {createError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Spacecraft ID *</label>
+                  <input
+                    type="text"
+                    value={createForm.spacecraft_id}
+                    onChange={(e) => setCreateForm({ ...createForm, spacecraft_id: e.target.value.toUpperCase() })}
+                    placeholder="e.g. SAT-02"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Vehicle Name *</label>
+                  <input
+                    type="text"
+                    value={createForm.name}
+                    onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                    placeholder="e.g. Explorer-1"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Mission Name *</label>
+                  <input
+                    type="text"
+                    value={createForm.mission_name}
+                    onChange={(e) => setCreateForm({ ...createForm, mission_name: e.target.value })}
+                    placeholder="e.g. ORBITSHIELD-MISSION-02"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Mission Type</label>
+                  <select
+                    value={createForm.mission_type}
+                    onChange={(e) => setCreateForm({ ...createForm, mission_type: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  >
+                    <option value="Science">Science</option>
+                    <option value="Technology Demonstration">Technology Demonstration</option>
+                    <option value="Communication">Communication</option>
+                    <option value="Earth Observation">Earth Observation</option>
+                    <option value="Navigation">Navigation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Orbit Type</label>
+                  <select
+                    value={createForm.orbit_type}
+                    onChange={(e) => setCreateForm({ ...createForm, orbit_type: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  >
+                    <option value="SUN_SYNCHRONOUS">Sun-Synchronous (SSO)</option>
+                    <option value="LEO">Low Earth Orbit (LEO)</option>
+                    <option value="MEO">Medium Earth Orbit (MEO)</option>
+                    <option value="GEO">Geostationary (GEO)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Orbit Altitude (km)</label>
+                  <input
+                    type="number"
+                    value={createForm.orbit_altitude_km}
+                    onChange={(e) => setCreateForm({ ...createForm, orbit_altitude_km: e.target.value })}
+                    placeholder="540"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Ground Station</label>
+                  <select
+                    value={createForm.ground_station}
+                    onChange={(e) => setCreateForm({ ...createForm, ground_station: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  >
+                    {stations.map((s) => (
+                      <option key={s.key_id} value={s.key_id}>
+                        {s.key_id} — {s.station_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">Operator Name *</label>
+                  <input
+                    type="text"
+                    value={createForm.operator_name}
+                    onChange={(e) => setCreateForm({ ...createForm, operator_name: e.target.value })}
+                    placeholder="e.g. Flight Director"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 mt-4 pt-3 border-t border-slate-800">
+                <button
+                  onClick={handleCreateSpacecraft}
+                  disabled={creating}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-mono font-bold flex items-center gap-2 shadow-lg shadow-cyan-600/20 transition cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {creating ? (
+                    <>
+                      <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                      Creating…
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      Create Spacecraft
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={resetCreateForm}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono font-bold transition cursor-pointer"
+                >
+                  Reset Form
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Spacecraft Creation Button ────────────────────────────────────── */}
+          {!showCreateForm && (
+            <button
+              onClick={() => setShowCreateForm(true)}
+              className="w-full py-4 rounded-2xl border-2 border-dashed border-slate-700 hover:border-cyan-600/50 bg-slate-900/50 hover:bg-slate-900/80 text-slate-400 hover:text-cyan-300 text-sm font-mono transition flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create New Spacecraft</span>
+            </button>
+          )}
 
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl">
             <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">

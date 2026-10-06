@@ -305,7 +305,12 @@ export class AttackerClient {
   /**
    * Send an attack envelope directly to the backend.
    * The attacker submits hostile commands to the security gateway.
-   * The gateway processes them through the full pipeline:
+   * 
+   * IMPORTANT: The attacker sends from an UNTRUSTED origin (port 3500).
+   * The security middleware allows /api/commands from attackers FOR DEMO PURPOSES
+   * so the gateway can process the envelope and demonstrate detection/blocking.
+   * 
+   * The gateway processes envelopes through the full pipeline:
    * - Authentication (verify key_id against registry)
    * - Integrity (verify HMAC signature)
    * - Replay (check nonce + sequence + timestamp)
@@ -314,12 +319,16 @@ export class AttackerClient {
    * - Risk engine
    * - Safety policy (may trigger SAFE_MODE)
    *
-   * The attacker remains UNTRUSTED - it cannot access privileged endpoints.
+   * A REAL gateway block = the envelope reached the gateway and was rejected by
+   * auth/integrity/replay/policy checks. The response contains a full audit_event.
+   * A PERIMETER block = the security middleware rejected the request at the edge (403).
    */
   public async sendAttack(envelope: CommandEnvelope): Promise<{
     success: boolean;
     status: number;
     blocked: boolean;
+    perimeterBlocked: boolean;
+    gatewayProcessed: boolean;
     error?: string;
     result?: unknown;
     eventId?: string;
@@ -328,37 +337,49 @@ export class AttackerClient {
       const response = await fetch('/api/commands', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
-          // No Origin header - attacker submits command directly
-          // The gateway processes it based on envelope content, not origin
+          'Content-Type': 'application/json',
+          // Send attacker origin so security middleware can log it properly
+          'Origin': 'http://localhost:3500'
         },
         body: JSON.stringify({ envelope })
       });
 
       const result = await response.json().catch(() => ({ error: 'Failed to parse response' }));
 
-      // Check if this was blocked by auth/integrity/replay (gateway decisions)
-      // vs blocked by perimeter (403 from security middleware)
-      const blockedByGateway = result.error && 
-        (result.error.includes('HMAC') || 
-         result.error.includes('Unauthorized') || 
-         result.error.includes('Replay') ||
-         result.error.includes('integrity') ||
-         result.error.includes('authentication'));
+      // Determine what happened:
+      // - response.ok (2xx) + audit_event = gateway processed and decided (ALLOW/MONITOR/BLOCK/SAFE_MODE)
+      // - response.ok (2xx) without audit_event = gateway processed but something unexpected
+      // - !response.ok (4xx/5xx) = could be perimeter block or gateway error
+      const hasAuditEvent = result && typeof result === 'object' && 'audit_event' in result;
+      const isHttpOk = response.ok;
+      
+      // Gateway-processed scenarios:
+      // 1. ALLOW/MONITOR: command accepted (rare for attacker with rogue creds)
+      // 2. BLOCK: gateway rejected (auth fail, integrity fail, replay, etc.) — REAL block
+      // 3. SAFE_MODE: gateway triggered safe mode — also a real gateway decision
+      const gatewayProcessed = isHttpOk && hasAuditEvent;
+      
+      // Perimeter block: untrusted origin blocked by security middleware (403 with security.blocked)
+      const perimeterBlocked = !isHttpOk && 
+        (result && typeof result === 'object' && 'security' in result && (result as any).security?.blocked);
 
       return {
-        success: response.ok || blockedByGateway,  // Success = got a gateway decision
+        success: gatewayProcessed || perimeterBlocked,  // We got a definitive answer either way
         status: response.status,
-        blocked: response.status === 403 && !blockedByGateway,  // Perimeter block
-        error: result.error,
-        result: response.ok || blockedByGateway ? result : undefined,
-        eventId: (result as any)?.security?.event_id
+        blocked: perimeterBlocked || (!isHttpOk && !gatewayProcessed),
+        perimeterBlocked,
+        gatewayProcessed,
+        error: result?.error,
+        result: gatewayProcessed ? result : undefined,
+        eventId: hasAuditEvent ? (result as any).audit_event?.event_id : (result as any)?.security?.event_id
       };
     } catch (err) {
       return {
         success: false,
         status: 0,
         blocked: false,
+        perimeterBlocked: false,
+        gatewayProcessed: false,
         error: err instanceof Error ? err.message : 'Network error'
       };
     }
