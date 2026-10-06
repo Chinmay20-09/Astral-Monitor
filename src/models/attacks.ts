@@ -13,6 +13,27 @@ export interface AttackScenario {
   defenseMechanism: string;
 }
 
+/**
+ * `ATTACK_SCENARIOS` ids are of the form `SCENARIO-TAMPER`, while the rest of
+ * the app (gateway scenario keys, UI icon/color maps, attack runners) uses
+ * `TAMPERING`, `INJECTION`, … Resolve through this table before any lookup:
+ * using the raw id returned `undefined`, and React rendered an element of type
+ * `undefined`, which blanked the Attack Simulator screen.
+ */
+export const SCENARIO_KEY_BY_ID: Record<string, string> = {
+  'SCENARIO-TAMPER': 'TAMPERING',
+  'SCENARIO-INJECT': 'INJECTION',
+  'SCENARIO-REPLAY': 'REPLAY',
+  'SCENARIO-COMPROMISE': 'CREDENTIAL_COMPROMISE',
+  'SCENARIO-DESTRUCTIVE-BURN': 'DESTRUCTIVE_BURN',
+  'SCENARIO-EAVESDROP': 'EAVESDROP'
+};
+
+/** Gateway scenario key for a scenario id (falls back to the id itself). */
+export function scenarioKey(id: string): string {
+  return SCENARIO_KEY_BY_ID[id] ?? id;
+}
+
 export const ATTACK_SCENARIOS: AttackScenario[] = [
   {
     id: 'SCENARIO-TAMPER',

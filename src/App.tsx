@@ -3,16 +3,43 @@ import OperatorShell from './components/OperatorShell';
 import { GroundConsole } from './components/GroundConsole';
 import { SpacecraftTwin } from './components/SpacecraftTwin';
 import { AttackSimulator } from './components/AttackSimulator';
+import { SessionView } from './components/SessionView';
+import { BackendMonitor } from './components/BackendMonitor';
+import { ServiceTopology } from './components/ServiceTopology';
+import { SecurityStatusCards } from './components/SecurityStatusCards';
+import { SecurityEventLog } from './components/SecurityEventLog';
+
+type Screen = 'ground' | 'twin' | 'attacker';
 
 interface AppProps {
-  activeScreen?: 'ground' | 'twin' | 'attacker';
+  activeScreen?: Screen;
 }
 
-export function App({ activeScreen: initialScreen = 'ground' }: AppProps) {
-  const [activeScreen, setActiveScreen] = useState<'ground' | 'twin' | 'attacker'>(initialScreen);
+/**
+ * Resolve the operator screen for this URL. The three Vite services (:3000
+ * Ground, :3100 Twin, :3500 Attacker) all serve the same index.html, so the
+ * screen must come from the URL — `start.bat` opens /twin and /attacker, and
+ * the per-service ports are a fallback. The dedicated entries
+ * (main.twin.tsx / main.attacker.tsx) still pass `activeScreen` explicitly,
+ * which takes precedence over this detection.
+ */
+function detectScreen(): Screen {
+  const path = window.location.pathname.toLowerCase();
+  if (path === '/twin' || path.startsWith('/twin/')) return 'twin';
+  if (path === '/attacker' || path.startsWith('/attacker/')) return 'attacker';
 
-  // Shared spacecraft id across all screens (defaults to SAT-01 if no session)
-  const [activeSpacecraft, setActiveSpacecraft] = useState<string>('SAT-01');
+  const { port } = window.location;
+  if (port === '3100' || port === '3010') return 'twin';
+  if (port === '3500') return 'attacker';
+  return 'ground';
+}
+
+export function App({ activeScreen: initialScreen }: AppProps) {
+  const [activeScreen, setActiveScreen] = useState<Screen>(
+    () => initialScreen ?? detectScreen()
+  );
+  const [sessionList, setSessionList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Load active spacecraft from backend (shared across all screens)
   useEffect(() => {

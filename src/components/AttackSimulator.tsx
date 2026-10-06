@@ -16,7 +16,7 @@ import {
   XCircle,
   Lock
 } from 'lucide-react';
-import { AttackScenario, ATTACK_SCENARIOS } from '../models/attacks';
+import { AttackScenario, ATTACK_SCENARIOS, scenarioKey } from '../models/attacks';
 import { attackerClient } from '../attacker/attackerClient';
 import { AuditEvent } from '../models/audit';
 import { SpacecraftState, EssentialTelemetry } from '../models/spacecraft';
@@ -75,6 +75,8 @@ const SCENARIO_MAP: Record<string, (() => Promise<{ envelope: any; description: 
   CREDENTIAL_COMPROMISE: () => attackerClient.generateCredentialCompromiseCommand(),
   DESTRUCTIVE_BURN: () => attackerClient.generateDestructiveBurn()
 };
+
+const FALLBACK_SCENARIO_BORDER = 'border-slate-700/60 hover:border-slate-600/70';
 
 const SCENARIO_ICONS: Record<string, typeof Skull> = {
   TAMPERING: FileCode,
@@ -163,7 +165,11 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
       // 1. Generate envelope client-side (attacker's independent capability)
       const generator = SCENARIO_MAP[scenario];
       if (!generator) {
-        setBrief(`Unknown attack scenario: ${scenario}`);
+        // Passive scenarios have no command envelope to transmit — say so
+        // instead of reporting an unknown scenario.
+        setBrief(
+          `${scenario} is passive: the channel is only observed, so no command envelope is sent. Launch TAMPERING or INJECTION first and watch the gateway record the intercepted ciphertext.`
+        );
         return;
       }
 
@@ -247,12 +253,15 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {ATTACK_SCENARIOS.map((scenario) => {
-          const Icon = SCENARIO_ICONS[scenario.id];
-          const isDownload = scenario.id === 'EAVESDROP';
+          const key = scenarioKey(scenario.id);
+          // Never render an undefined component: an unmapped scenario falls back
+          // to a real icon/border instead of crashing React.
+          const Icon = SCENARIO_ICONS[key] ?? ShieldAlert;
+          const isDownload = key === 'EAVESDROP';
           return (
             <div
               key={scenario.id}
-              className={`rounded-2xl border bg-slate-900/70 p-4 shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl ${SCENARIO_COLORS[scenario.id]} ${SCENARIO_HIGHLIGHTS[scenario.id]}`}
+              className={`rounded-2xl border bg-slate-900/70 p-4 shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl ${SCENARIO_COLORS[key] ?? FALLBACK_SCENARIO_BORDER} ${SCENARIO_HIGHLIGHTS[key] ?? ''}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
@@ -273,7 +282,7 @@ export const AttackSimulator: React.FC<AttackSimulatorProps> = ({ onAttackResult
               </div>
 
               <button
-                onClick={() => runAttack(scenario.id)}
+                onClick={() => runAttack(key)}
                 disabled={isSimulating}
                 className={`mt-3 w-full py-2.5 rounded-xl text-xs font-mono font-semibold transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-wait ${
                   isDownload

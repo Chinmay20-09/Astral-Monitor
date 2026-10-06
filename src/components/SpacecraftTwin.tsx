@@ -29,7 +29,9 @@ const postureStyles: Record<string, string> = {
 
 function useProjection(payload: TwinPayload | null, tick: number) {
   return useMemo(() => {
-    if (!payload) return null;
+    // tick === 0 keeps the pre-tick behaviour of "no projection yet" without
+    // having to call this hook conditionally (which breaks the Rules of Hooks).
+    if (!payload || tick === 0) return null;
     const progress = ((payload.orbit_progress * 10000 + tick) % 10000) / 10000;
     return {
       orbit_progress: progress,
@@ -73,7 +75,10 @@ export const SpacecraftTwin: React.FC<SpacecraftTwinProps> = ({ spacecraftId = '
     };
   }, [spacecraftId]);
 
-  const projection = tick > 0 ? useProjection(payload, tick) : null;
+  // Hooks must run on every render: calling useProjection conditionally made
+  // React throw "Rendered more hooks than during the previous render" as soon
+  // as the first tick fired, blanking the whole screen.
+  const projection = useProjection(payload, tick);
 
   const isEclipse = payload?.solar_condition === 'UMBRA_ECLIPSE';
   const isSafe = payload?.operating_mode === 'SAFE_MODE';

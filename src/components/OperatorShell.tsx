@@ -61,7 +61,7 @@ export const OperatorShell: React.FC<OperatorShellProps> = ({
         <div className="mb-5">
           <h2 className="text-lg font-bold text-white font-mono">{title}</h2>
           <p className="text-xs text-slate-400 font-mono">
-            All three screens (Ground :3000, Twin :3001, Attacker :3500) share one backend :4000 and the same active session.
+            All three screens (Ground :3000, Twin :3100, Attacker :3500) share one backend :4000 and the same active session.
           </p>
         </div>
 
